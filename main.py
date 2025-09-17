@@ -1,15 +1,15 @@
 import os
 import random
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Flask, request
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # --- ENV VARIABLES ---
-BOT_TOKEN = "8059024060:AAHq7F5WPKGLeo6a3GyHTH32oeXySe1D2WI"  # Bot token
-ADMIN_ID = 6733100026  # Admin telegram ID
-WEBHOOK_URL = "https://spin-3n80.onrender.com"  # Render URL
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # Sizning bot token
+ADMIN_ID = int(os.getenv("ADMIN_ID"))  # Admin telegram ID
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Render URL: https://your-render-url.onrender.com
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
@@ -49,7 +49,18 @@ def give_daily_bonus(user):
     user["last_bonus"] = datetime.now().isoformat()
     user["spins"] = user.get("spins", 0) + 1
 
-# --- WEBHOOK HANDLER ---
+def check_channels_subscription(user_id):
+    channels = load_channels()
+    for ch in channels:
+        try:
+            member = bot.get_chat_member(ch, user_id)
+            if member.status in ["left", "kicked"]:
+                return False
+        except:
+            return False
+    return True
+
+# --- HANDLERS ---
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     json_str = request.get_data().decode("utf-8")
@@ -57,7 +68,6 @@ def webhook():
     bot.process_new_updates([update])
     return "", 200
 
-# --- START COMMAND ---
 @bot.message_handler(commands=["start"])
 def start(message):
     users = load_users()
@@ -71,39 +81,40 @@ def start(message):
             ref_user = users.get(ref_id)
             if ref_user:
                 ref_user["spins"] = ref_user.get("spins", 0) + 1
-                bot.send_message(ref_id, f"Sizning referalingiz kirib bitta spin imkoniyati oldi!")
+                bot.send_message(ref_id, "Sizning referalingiz kirib bitta spin imkoniyati oldi!")
 
     if user_id not in users:
-        users[user_id] = {"spins": 1, "balance": 0, "last_bonus": "2000-01-01"}
+        users[user_id] = {"spins": 1, "balance": 0}
     save_users(users)
 
     kb = InlineKeyboardMarkup()
     kb.add(InlineKeyboardButton("🎰 Spin qilish", callback_data="spin"))
     kb.add(InlineKeyboardButton("💰 Hisobim", callback_data="balance"))
-    kb.add(InlineKeyboardButton("👥 Referal linkim", callback_data="ref"))
-    kb.add(InlineKeyboardButton("💵 Pul yechish", callback_data="withdraw"))
+    kb.add(InlineKeyboardButton("👥 Referal link", callback_data="ref"))
+    kb.add(InlineKeyboardButton("💳 Pul yechish", callback_data="withdraw"))
     bot.send_message(message.chat.id, "Salom! Spin botga xush kelibsiz!", reply_markup=kb)
 
-# --- CALLBACK HANDLER ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     users = load_users()
     user_id = str(call.from_user.id)
     user = users[user_id]
 
+    # Kanal obuna tekshirish
+    if not check_channels_subscription(user_id):
+        bot.answer_callback_query(call.id, "Iltimos, barcha kanallarga obuna bo'ling!")
+        return
+
     if call.data == "spin":
         if user.get("spins", 0) <= 0:
             bot.answer_callback_query(call.id, "Sizda spin yo'q 😢")
             return
-
-        # GIF baraban animation
-        bot.send_animation(call.message.chat.id, animation=open("spin.gif", "rb"))
-        
-        amounts = [1000,2000,3000,4000,5000,6000,7000,8000,9000,10000]
-        prize = random.choice(amounts)
-        user["balance"] += prize
+        # Spin animation (GIF)
+        prize = random.choice([1000,2000,3000,4000,5000,6000,7000,8000,9000,10000])
+        user["balance"] = user.get("balance", 0) + prize
         user["spins"] -= 1
         save_users(users)
+        bot.send_animation(call.message.chat.id, "https://i.gifer.com/embedded/download/3o7aCTPPm4OHfR2Q0g.gif")
         bot.send_message(call.message.chat.id, f"🎉 Tabrik! Siz {prize} so'm yutdingiz!")
 
     elif call.data == "balance":
@@ -112,37 +123,50 @@ def callback_query(call):
         bot.send_message(call.message.chat.id, f"Sizning balans: {bal} so'm\nSpins: {spins}")
 
     elif call.data == "ref":
-        bot.send_message(call.message.chat.id, f"Sizning referal link: https://t.me/Spinomad_bot?start={user_id}")
+        bot.send_message(call.message.chat.id, f"Sizning referal link: https://t.me/@Spinomad_bot?start={user_id}")
 
     elif call.data == "withdraw":
-        if user.get("balance",0) < 100000:
-            bot.answer_callback_query(call.id, "Minimal pul yechish 100 000 so'm")
+        if user.get("balance", 0) < 100000:
+            bot.send_message(call.message.chat.id, "Minimal pul yechish 100 000 so'm!")
             return
-        msg = bot.send_message(call.message.chat.id, "Pul yechish uchun kartangiz raqamini kiriting:")
-        bot.register_next_step_handler(msg, ask_amount)
+        msg = bot.send_message(call.message.chat.id, "Iltimos, karta raqamingizni kiriting:")
+        bot.register_next_step_handler(msg, process_withdraw)
 
-def ask_amount(message):
+def process_withdraw(message):
     users = load_users()
     user_id = str(message.from_user.id)
     user = users[user_id]
-    card = message.text
-    msg2 = bot.send_message(message.chat.id, f"Nech pul yechmoqchisiz? Maksimal {user['balance']} so'm")
-    bot.register_next_step_handler(msg2, complete_withdraw, card)
+    card = message.text.strip()
 
-def complete_withdraw(message, card):
-    users = load_users()
-    user_id = str(message.from_user.id)
-    user = users[user_id]
-    amount = int(message.text)
-    if amount > user["balance"]:
-        bot.send_message(message.chat.id, "Xato! Sizning balansingiz yetarli emas.")
+    if user["balance"] < 100000:
+        bot.send_message(message.chat.id, "Sizda yetarli mablag' yo'q!")
         return
+
+    msg2 = bot.send_message(message.chat.id, f"Mablag'ingizdan qancha yechmoqchisiz? (min: 100000 so'm)")
+    bot.register_next_step_handler(msg2, process_withdraw_amount, card)
+
+def process_withdraw_amount(message, card):
+    users = load_users()
+    user_id = str(message.from_user.id)
+    user = users[user_id]
+
+    try:
+        amount = int(message.text.strip())
+    except:
+        bot.send_message(message.chat.id, "Faqat raqam kiriting!")
+        return
+
     if amount < 100000:
-        bot.send_message(message.chat.id, "Minimal pul yechish 100 000 so'm")
+        bot.send_message(message.chat.id, "Minimal yechish 100 000 so'm!")
         return
+
+    if amount > user["balance"]:
+        bot.send_message(message.chat.id, "Sizning balansingiz yetarli emas!")
+        return
+
     user["balance"] -= amount
     save_users(users)
-    bot.send_message(message.chat.id, f"✅ Mufaqiyatli! {amount} so'm 48 soat ichida hisobingizga tushadi.")
+    bot.send_message(message.chat.id, f"Muvaffaqiyatli! {amount} so'm 48 soat ichida hisobingizga tushadi!")
 
 # --- ADMIN PANEL ---
 @bot.message_handler(commands=["add_channel"])
@@ -170,11 +194,12 @@ def remove_channel(message):
         save_channels(channels)
         bot.reply_to(message, f"❌ Kanal o'chirildi: {parts[1]}")
 
-# --- WEBHOOK SETUP ---
+# --- SET WEBHOOK ---
 def set_webhook():
     bot.remove_webhook()
     bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
 
+# --- RUN ---
 if __name__ == "__main__":
     set_webhook()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
