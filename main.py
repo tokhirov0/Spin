@@ -9,7 +9,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 # --- ENV VARIABLES ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Render URL: https://your-app.onrender.com
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://your-app.onrender.com
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
@@ -110,10 +110,11 @@ def callback_query(call):
             bot.answer_callback_query(call.id, "❌ Spin ishlashi uchun barcha kanalga obuna bo‘ling!")
             return
 
-        try:
-            bot.send_animation(call.message.chat.id, "https://i.gifer.com/7efs.gif")
-        except:
-            pass
+        # Spin gif animatsiya
+        bot.send_animation(
+            call.message.chat.id,
+            "https://media.giphy.com/media/3oEjI6SIIHBdRxXI40/giphy.gif"
+        )
 
         amounts = [1000,2000,3000,4000,5000,6000,7000,8000,9000,10000]
         prize = random.choice(amounts)
