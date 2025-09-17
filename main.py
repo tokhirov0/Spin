@@ -5,6 +5,7 @@ from flask import Flask, request
 import telebot
 from telebot import types
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -14,13 +15,13 @@ bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
 # Foydalanuvchi ma'lumotlari
-users = {}  # user_id: {'balance': int, 'spins': int, 'referrals': set()}
+users = {}  # user_id: {'balance': int, 'spins': int, 'referrals': set(), 'last_daily': date}
 
 # Baraban spin (animatsiya bilan)
 def spin_baraban_animation():
-    outcomes = ['💰1000','💰5000','💰10000','💰50000','💰100000','❌0']
+    outcomes = ['💰1000','💰2000','💰3000','💰4000','💰5000','💰7000','💰10000','❌0']
     animation = ['🎰|','🎰/','🎰-','🎰\\']  # oddiy animatsiya
-    for i in range(6):
+    for _ in range(6):
         yield random.choice(animation)
         time.sleep(0.2)
     result = random.choice(outcomes)
@@ -37,13 +38,17 @@ def start_handler(message):
             ref_id = int(message.text.split()[1])
         except:
             ref_id = None
+
     if user_id not in users:
-        users[user_id] = {'balance':0,'spins':1,'referrals': set()}
+        users[user_id] = {'balance':0,'spins':1,'referrals': set(), 'last_daily': None}
+
+        # Referal tizimi
         if ref_id and ref_id in users and user_id != ref_id:
             users[ref_id]['spins'] +=1
             users[ref_id]['referrals'].add(user_id)
             bot.send_message(ref_id, f"🟢 Sizning referalingiz kirdi! +1 spin berildi.")
 
+    # Inline menu
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("🎰 Spin urish", callback_data="spin"),
@@ -62,7 +67,7 @@ def start_handler(message):
 def callback_handler(call):
     user_id = call.from_user.id
     if user_id not in users:
-        users[user_id] = {'balance':0,'spins':1,'referrals': set()}
+        users[user_id] = {'balance':0,'spins':1,'referrals': set(), 'last_daily': None}
 
     if call.data == "spin":
         if users[user_id]['spins'] <=0:
@@ -86,8 +91,13 @@ def callback_handler(call):
         spins = users[user_id]['spins']
         bot.answer_callback_query(call.id, f"💰 Hisobingiz: {bal} so‘m\n🎰 Spiningiz: {spins}")
     elif call.data == "daily":
-        users[user_id]['spins'] +=1
-        bot.answer_callback_query(call.id, "🎁 Har kunlik bonus: +1 spin!")
+        today = datetime.now().date()
+        if users[user_id]['last_daily'] == today:
+            bot.answer_callback_query(call.id, "❌ Bugun siz allaqachon daily bonus oldingiz.")
+        else:
+            users[user_id]['spins'] +=1
+            users[user_id]['last_daily'] = today
+            bot.answer_callback_query(call.id, "🎁 Har kunlik bonus: +1 spin!")
     elif call.data == "withdraw":
         if users[user_id]['balance'] < 100000:
             bot.answer_callback_query(call.id, "❌ Minimal pul yechish: 100,000 so‘m")
